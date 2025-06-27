@@ -1,0 +1,25 @@
+# Ignore Python cache and logs
+__pycache__/
+*.py[cod]
+*.log
+
+# Ignore virtual environments
+chatbot-env/
+
+# Ignore Gradio app history and flagged data
+.gradio/
+flagged/
+certificate.pem
+
+# Ignore system and IDE files
+.DS_Store
+.env
+
+# Ignore compiled files
+*.so
+*.dll
+*.dylib
+
+# Ignore MongoDB dumps if any
+*.bson
+*.json

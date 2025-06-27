@@ -1,3 +1,4 @@
+import time
 from typing import Annotated
 from typing_extensions import TypedDict
 import os
@@ -59,7 +60,6 @@ Avoid using the tool for timeless information like math, code, definitions, or o
 def chatbot(state: State):
     messages = state["messages"]
 
-    # Detect name in user message
     if isinstance(messages[-1], HumanMessage):
         content = messages[-1].content.lower()
         if "my name is" in content:
@@ -69,7 +69,6 @@ def chatbot(state: State):
             except:
                 pass
 
-    # Build system message with dynamic memory
     system_content = BASE_PROMPT
     if temp_memory["name"]:
         system_content += f"\n\nUser's name is {temp_memory['name']}."
@@ -97,15 +96,14 @@ def stream_graph_updates(user_input: str):
     for event in graph.stream({"messages": [HumanMessage(content=user_input)]}):
         for value in event.values():
             message = value["messages"][-1]
-            if hasattr(message, 'content') and not isinstance(message, ToolMessage):
+            if hasattr(message, 'content') and isinstance(message.content, str) and not isinstance(message, ToolMessage):
                 response = message.content
+                yield response
     message_doc["answer"] = response
     chat_collection.insert_one(message_doc)
-    # Clean up old chats if more than 10
     if chat_collection.count_documents({}) > 10:
         oldest = chat_collection.find().sort("_id", 1).limit(1)[0]
         chat_collection.delete_one({"_id": oldest["_id"]})
-    return response
 
 # FastAPI Setup
 app = FastAPI()
@@ -123,29 +121,33 @@ class ChatInput(BaseModel):
 
 @app.post("/chat")
 def chat_endpoint(chat: ChatInput):
-    response = stream_graph_updates(chat.message)
-    return {"response": response}
+    full_response = ""
+    for chunk in stream_graph_updates(chat.message):
+        full_response = chunk
+    return {"response": full_response}
 
-# Run with: uvicorn chatbot:app --reload
+# Gradio Interface with Streaming and Threading
 if __name__ == "__main__":
     import gradio as gr
+
     def chat_with_bot(message, history):
-        response = stream_graph_updates(message)
-        history = history + [
-            {"role": "user", "content": message},
-            {"role": "assistant", "content": response}
-        ]
-        return history, ""
+        try:
+            final_response = ""
+            for chunk in stream_graph_updates(message):
+                final_response = chunk
+                yield final_response
+            if not final_response:
+                yield "Sorry, I didn't get a response."
+        except Exception as e:
+            yield f"Error: {str(e)}"
 
-    with gr.Blocks(title="My Assistant Charles", theme=gr.themes.Base(primary_hue="pink", secondary_hue="green")) as demo:
-        gr.Markdown("""# My Assistant Charles""")  # rockstar emoji
-        chatbot = gr.Chatbot(label="Conversation", height=500, type="messages")
-        msg = gr.Textbox(placeholder="Ask something...", label="Your Message")
-        submit = gr.Button("Send", variant="primary")
-        clear = gr.Button("Clear Chat", variant="secondary")
-
-        submit.click(chat_with_bot, inputs=[msg, chatbot], outputs=[chatbot, msg])
-        msg.submit(chat_with_bot, inputs=[msg, chatbot], outputs=[chatbot, msg])
-        clear.click(lambda: ([], ""), outputs=[chatbot, msg])
+    demo = gr.ChatInterface(
+        fn=chat_with_bot,
+        title="My Assistant Charles",
+        theme=gr.themes.Base(primary_hue="pink"),
+        type="messages",
+        save_history=True
+    )
 
     demo.launch(server_name="127.0.0.1", server_port=7861, share=True, inbrowser=True)
+
